@@ -6,7 +6,7 @@ final class SuggestionPanel {
     private let panel: NSPanel
     private let routeLabel = NSTextField(labelWithString: "")
     private let previewLabel = NSTextField(labelWithString: "")
-    private let hintLabel = NSTextField(labelWithString: "Tab 또는 ⇧⇧ 바꾸기 · 계속 입력하면 무시")
+    private let hintLabel = NSTextField(labelWithString: "Tab 바꾸기 · 계속 입력하면 무시")
 
     init() {
         panel = NSPanel(

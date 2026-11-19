@@ -1,19 +1,20 @@
-// Renders the SpaType app icon. Usage: swift scripts/make-icon.swift <out.png>
+// Renders the SpaType app icon. Usage: swift scripts/make-icon.swift <out.png> [--single]
 //
-// A keycap on a deep ink tile. Like a real Korean keyboard, the key carries two legends:
-// the English "spa" that was actually typed (small, accent colour) and the Hangul it was
-// meant to be — "넴" — in the middle.
+// A MacBook keyboard key on an aluminium tile. Like the keys on a Korean MacBook, it carries
+// two legends on a diagonal: the Latin "s" top-right and the Hangul "ㄴ" bottom-left —
+// the same key, two languages, which is exactly the mix-up SpaType fixes.
 import AppKit
 
 let size: CGFloat = 1024
-let out = CommandLine.arguments.dropFirst().first ?? "AppIcon.png"
+let args = Array(CommandLine.arguments.dropFirst())
+let out = args.first { !$0.hasPrefix("--") } ?? "AppIcon.png"
+let showNeighbors = !args.contains("--single")   // default: zoomed-in keyboard with neighbouring keys
 
 // MARK: Palette
-let tileTop = 0x2B3A55, tileMid = 0x1B2638, tileBottom = 0x0E1521   // ink navy
-let capFaceTop = 0xFFFFFF, capFaceBottom = 0xF1F3F7                 // key top
-let capSkirtTop = 0xE9ECF2, capSkirtBottom = 0xC5CBD6               // key sides
-let legendInk = 0x131A26                                            // "넴"
-let accent = 0x3D7BFF                                               // "spa"
+let aluminiumTop = 0xE9EBEF, aluminiumBottom = 0xB4B9C1     // silver deck
+let wellColor = 0x0E0F11                                     // gap around the key
+let capTop = 0x2E2F33, capBottom = 0x1B1C1F                  // black keycap
+let legend = 0xF2F3F5
 
 func color(_ hex: Int, _ alpha: CGFloat = 1) -> NSColor {
     NSColor(
@@ -29,12 +30,46 @@ func font(_ names: [String], size: CGFloat, weight: NSFont.Weight) -> NSFont {
     return .systemFont(ofSize: size, weight: weight)
 }
 
-/// Draws `text` so its visible glyphs (not the line box) are centred on `center`.
-func drawText(_ text: String, font: NSFont, color: NSColor, center: CGPoint, kern: CGFloat = 0) {
-    let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .kern: kern]
+/// Draws `text` with the top-left (or bottom-right) of its visible glyphs at `point`.
+enum Anchor { case topLeft, topRight, bottomLeft, bottomRight, center }
+func drawText(_ text: String, font: NSFont, color: NSColor, at point: CGPoint, anchor: Anchor) {
+    let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
     let str = NSAttributedString(string: text, attributes: attrs)
-    let bounds = str.boundingRect(with: .zero, options: [.usesLineFragmentOrigin, .usesDeviceMetrics])
-    str.draw(at: CGPoint(x: center.x - bounds.midX, y: center.y - bounds.midY))
+    let b = str.boundingRect(with: .zero, options: [.usesLineFragmentOrigin, .usesDeviceMetrics])
+    let origin: CGPoint
+    switch anchor {
+    case .topLeft: origin = CGPoint(x: point.x - b.minX, y: point.y - b.maxY)
+    case .topRight: origin = CGPoint(x: point.x - b.maxX, y: point.y - b.maxY)
+    case .bottomLeft: origin = CGPoint(x: point.x - b.minX, y: point.y - b.minY)
+    case .bottomRight: origin = CGPoint(x: point.x - b.maxX, y: point.y - b.minY)
+    case .center: origin = CGPoint(x: point.x - b.midX, y: point.y - b.midY)
+    }
+    str.draw(at: origin)
+}
+
+/// One MacBook-style key: a dark well, then a flat black cap with a soft top highlight.
+func drawKey(_ rect: CGRect, radius: CGFloat, alpha: CGFloat = 1, ctx: CGContext) {
+    ctx.saveGState()
+    ctx.setAlpha(alpha)
+    // Well (the cut-out in the aluminium deck).
+    let well = rect.insetBy(dx: -rect.width * 0.035, dy: -rect.width * 0.035)
+    color(wellColor).setFill()
+    NSBezierPath(roundedRect: well, xRadius: radius * 1.15, yRadius: radius * 1.15).fill()
+
+    // Cap.
+    let cap = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
+    ctx.saveGState()
+    cap.addClip()
+    NSGradient(colors: [color(capTop), color(capBottom)])!.draw(in: rect, angle: -90)
+    // Backlight spill / sheen across the top edge.
+    NSGradient(colors: [color(0xFFFFFF, 0.10), color(0xFFFFFF, 0)])!
+        .draw(in: CGRect(x: rect.minX, y: rect.maxY - rect.height * 0.25, width: rect.width, height: rect.height * 0.25), angle: -90)
+    ctx.restoreGState()
+    color(0xFFFFFF, 0.10).setStroke()
+    let edge = NSBezierPath(roundedRect: rect.insetBy(dx: 1.5, dy: 1.5), xRadius: radius - 1.5, yRadius: radius - 1.5)
+    edge.lineWidth = 3
+    edge.stroke()
+    ctx.restoreGState()
 }
 
 let rep = NSBitmapImageRep(
@@ -56,67 +91,77 @@ tileShadow.shadowColor = color(0x000000, 0.30)
 tileShadow.shadowOffset = CGSize(width: 0, height: -12)
 tileShadow.shadowBlurRadius = 28
 tileShadow.set()
-color(tileMid).setFill()
+color(aluminiumBottom).setFill()
 tilePath.fill()
 ctx.restoreGState()
 
 ctx.saveGState()
 tilePath.addClip()
-NSGradient(colors: [color(tileTop), color(tileMid), color(tileBottom)], atLocations: [0, 0.5, 1],
-           colorSpace: .sRGB)!.draw(in: tile, angle: -90)
-// Faint top light so the tile isn't flat.
-NSGradient(colors: [color(0xFFFFFF, 0.10), color(0xFFFFFF, 0)])!
-    .draw(fromCenter: CGPoint(x: 512, y: 960), radius: 0, toCenter: CGPoint(x: 512, y: 960), radius: 560, options: [])
-ctx.restoreGState()
-// Hairline inner edge.
-let edge = NSBezierPath(roundedRect: tile.insetBy(dx: 1.5, dy: 1.5), xRadius: 183.5, yRadius: 183.5)
-color(0xFFFFFF, 0.08).setStroke()
-edge.lineWidth = 3
-edge.stroke()
+NSGradient(colors: [color(aluminiumTop), color(aluminiumBottom)])!.draw(in: tile, angle: -90)
+// Faint brushed-metal streaks.
+for i in stride(from: 0, to: 824, by: 6) {
+    let y = tile.minY + CGFloat(i)
+    color(0xFFFFFF, (i / 6) % 3 == 0 ? 0.05 : 0.0).setFill()
+    NSBezierPath(rect: CGRect(x: tile.minX, y: y, width: tile.width, height: 2)).fill()
+}
 
-// MARK: Keycap
-let capOuter = CGRect(x: 232, y: 214, width: 560, height: 580)
-let capOuterPath = NSBezierPath(roundedRect: capOuter, xRadius: 118, yRadius: 118)
+// MARK: Keys
+let keySize: CGFloat = showNeighbors ? 440 : 520
+let gap: CGFloat = showNeighbors ? 44 : 60
+let key = CGRect(x: 512 - keySize / 2, y: 512 - keySize / 2, width: keySize, height: keySize)
+let radius = keySize * 0.11
+/// "ㄴ" sits lower than "s" is high, like the Hangul legend on a real Korean MacBook key.
+let hangulBottomInset: CGFloat = 0.085
 
+if showNeighbors {
+    // Real row stagger, relative to S: the QWER row sits 0.25 key left, the ZXCV row 0.5 key right.
+    let step = keySize + gap
+    let rows: [(dy: CGFloat, dx: CGFloat, keys: [(String, String)])] = [
+        (step, -0.25, [("q", "ㅂ"), ("w", "ㅈ"), ("e", "ㄷ")]),
+        (0, 0, [("a", "ㅁ"), ("", ""), ("d", "ㅇ")]),
+        (-step, 0.5, [("z", "ㅋ"), ("x", "ㅌ"), ("c", "ㅊ")]),
+    ]
+    for row in rows {
+        for (i, legends) in row.keys.enumerated() where !(row.dy == 0 && i == 1) {
+            let r = key.offsetBy(dx: (CGFloat(i - 1) + row.dx) * step, dy: row.dy)
+            drawKey(r, radius: radius, ctx: ctx)
+            let li = keySize * 0.15
+            drawText(legends.0, font: font(["SFPro-Regular"], size: keySize * 0.3, weight: .regular),
+                     color: color(legend, 0.35), at: CGPoint(x: r.maxX - li, y: r.maxY - li), anchor: .topRight)
+            drawText(legends.1, font: font(["AppleSDGothicNeo-Regular"], size: keySize * 0.32, weight: .regular),
+                     color: color(legend, 0.35), at: CGPoint(x: r.minX + li, y: r.minY + keySize * hangulBottomInset), anchor: .bottomLeft)
+        }
+    }
+}
+ctx.restoreGState()   // end tile clip
+
+// Main key gets a soft drop shadow so it lifts off the deck.
 ctx.saveGState()
-let capShadow = NSShadow()
-capShadow.shadowColor = color(0x000000, 0.50)
-capShadow.shadowOffset = CGSize(width: 0, height: -24)
-capShadow.shadowBlurRadius = 44
-capShadow.set()
-color(capSkirtBottom).setFill()
-capOuterPath.fill()
+let keyShadow = NSShadow()
+keyShadow.shadowColor = color(0x000000, 0.35)
+keyShadow.shadowOffset = CGSize(width: 0, height: -10)
+keyShadow.shadowBlurRadius = 24
+keyShadow.set()
+color(wellColor).setFill()
+NSBezierPath(roundedRect: key, xRadius: radius, yRadius: radius).fill()
 ctx.restoreGState()
+drawKey(key, radius: radius, ctx: ctx)
 
-ctx.saveGState()
-capOuterPath.addClip()
-NSGradient(colors: [color(capSkirtTop), color(capSkirtBottom)])!.draw(in: capOuter, angle: -90)
-ctx.restoreGState()
-
-let face = CGRect(x: 272, y: 268, width: 480, height: 490)
-let facePath = NSBezierPath(roundedRect: face, xRadius: 92, yRadius: 92)
-ctx.saveGState()
-facePath.addClip()
-NSGradient(colors: [color(capFaceTop), color(capFaceBottom)])!.draw(in: face, angle: -90)
-ctx.restoreGState()
-color(0xFFFFFF).setStroke()
-facePath.lineWidth = 3
-facePath.stroke()
-
-// MARK: Legends
+// MARK: Legends — diagonal, like a Korean MacBook key.
+let inset: CGFloat = keySize * 0.15
 drawText(
-    "spa",
-    font: NSFont.monospacedSystemFont(ofSize: 66, weight: .bold),   // SF Mono
-    color: color(accent),
-    center: CGPoint(x: 370, y: 690),
-    kern: 0
+    "s",
+    font: font(["SFPro-Regular", "SF Pro Text"], size: keySize * 0.36, weight: .regular),
+    color: color(legend),
+    at: CGPoint(x: key.maxX - inset, y: key.maxY - inset),
+    anchor: .topRight
 )
 drawText(
-    "넴",
-    font: font(["BMHANNAProOTF", "AppleSDGothicNeo-Bold"], size: 300, weight: .bold),   // 배달의민족 한나 Pro
-    color: color(legendInk),
-    center: CGPoint(x: 516, y: 452),
-    kern: 0
+    "ㄴ",
+    font: font(["AppleSDGothicNeo-Regular"], size: keySize * 0.38, weight: .regular),
+    color: color(legend),
+    at: CGPoint(x: key.minX + inset, y: key.minY + keySize * hangulBottomInset),
+    anchor: .bottomLeft
 )
 
 NSGraphicsContext.restoreGraphicsState()

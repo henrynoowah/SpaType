@@ -22,8 +22,7 @@ final class Corrector {
             }
             usleep(20_000)
 
-            DispatchQueue.main.sync { catalog.select(suggestion.target) }
-            usleep(120_000)   // give the input source switch time to settle
+            self.switchInputSource(to: suggestion.target, catalog: catalog)
 
             for stroke in suggestion.replay {
                 Self.press(CGKeyCode(stroke.keyCode), shift: stroke.shift, source: source)
@@ -35,6 +34,29 @@ final class Corrector {
                 completion()
             }
         }
+    }
+
+    /// Input sources already switched to once in this session; the first switch to an input method
+    /// (Korean, Japanese) is slow because the IME has to come up before it handles keys.
+    private var warmedUp: Set<String> = []
+
+    /// Selects `target` and blocks (on the corrector queue) until the switch has actually happened,
+    /// so the replayed keys aren't typed through the old layout.
+    private func switchInputSource(to target: SourceDescriptor, catalog: InputSourceCatalog) {
+        func isCurrent() -> Bool { DispatchQueue.main.sync { catalog.current?.id == target.id } }
+
+        for attempt in 0..<2 {
+            DispatchQueue.main.sync { catalog.select(target) }
+            let deadline = Date().addingTimeInterval(0.8)
+            while Date() < deadline, !isCurrent() { usleep(15_000) }
+            if isCurrent() { break }
+            if attempt == 0 { usleep(50_000) }   // known TIS flakiness with CJK sources: select again
+        }
+
+        // The system reports the new source before the frontmost app's text input has picked it up.
+        let firstTime = !warmedUp.contains(target.id)
+        warmedUp.insert(target.id)
+        usleep(firstTime && target.kind != .layout ? 350_000 : 120_000)
     }
 
     private static func press(_ keyCode: CGKeyCode, shift: Bool, source: CGEventSource?) {

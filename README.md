@@ -97,7 +97,7 @@ Corrections **replay keys** instead of inserting finished text, so Hangul compos
 - **When the current source is Japanese** (English typed into the Japanese IME), nothing is detected yet; composing text on screen needs a different way to delete.
 - Supported IMEs: 2-set Korean and Japanese romaji input. 3-set Korean, Pinyin, kana input and third-party IMEs are skipped.
 - 2-set Korean and romaji assume US QWERTY key positions.
-- Some apps apply a CJK `TISSelectInputSource` switch late (a macOS bug). If replays come out wrong, raise the wait in `Corrector` (120 ms).
+- Some apps apply a CJK `TISSelectInputSource` switch late (a macOS bug). SpaType waits until the switch is confirmed (and longer the first time an IME is used); if replays still come out in the old layout, raise the waits in `Corrector.switchInputSource`.
 - If an Electron app doesn't report the caret position, the panel appears near the focused field or the mouse.
 - If an app changes the text itself (autocorrect), the number of characters to delete can be off.
 
