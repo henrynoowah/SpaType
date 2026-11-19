@@ -3,12 +3,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-swift build -c release
+# SPATYPE_UNIVERSAL=1 builds for both Apple silicon and Intel (used by scripts/release.sh).
+BUILD_ARGS=(-c release)
+if [[ "${SPATYPE_UNIVERSAL:-0}" == "1" ]]; then
+  BUILD_ARGS+=(--arch arm64 --arch x86_64)
+fi
+swift build "${BUILD_ARGS[@]}"
+BIN_DIR="$(swift build "${BUILD_ARGS[@]}" --show-bin-path)"
 
 APP="build/SpaType.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
-cp ".build/release/SpaType" "$APP/Contents/MacOS/SpaType"
+cp "$BIN_DIR/SpaType" "$APP/Contents/MacOS/SpaType"
 cp "Resources/Info.plist" "$APP/Contents/Info.plist"
 mkdir -p "$APP/Contents/Resources"
 cp "Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
