@@ -26,7 +26,7 @@ It isn't limited to Korean and English. Any pair of input sources you have enabl
 
 1. Download `SpaType-<version>.zip` from [Releases](https://github.com/henrynoowah/SpaType/releases/latest), unzip it, and move `SpaType.app` to `Applications`.
 2. The app isn't notarized by Apple, so macOS blocks it the first time. **Right-click → Open**, or click **Open Anyway** at the bottom of System Settings → Privacy & Security.
-3. Allow SpaType under **Accessibility** and **Input Monitoring**. When the menu bar icon turns into `⌨︎` (no dot), it's running.
+3. Allow SpaType under **Accessibility** and **Input Monitoring**. When the keycap icon in the menu bar turns from dimmed to solid, it's running.
 
 The app is universal: it runs on both Apple silicon and Intel Macs.
 
@@ -43,7 +43,7 @@ swift test                    # engine unit tests (judging, 2-set Korean, romaji
 ./scripts/bundle.sh --run     # build build/SpaType.app and launch it
 ```
 
-On first launch SpaType asks for **Accessibility** and **Input Monitoring**. Once you allow it in System Settings → Privacy & Security, detection starts within two seconds (menu bar icon `⌨︎·` → `⌨︎`).
+On first launch SpaType asks for **Accessibility** and **Input Monitoring**. Once you allow it in System Settings → Privacy & Security, detection starts within two seconds (the menu bar keycap icon goes from dimmed to solid).
 
 > **Permissions are tied to the app's signature.** Ad-hoc signatures change on every build, so macOS forgets the grant. Run `scripts/make-dev-cert.sh` once to put a self-signed "SpaType Dev" certificate in your keychain; `bundle.sh` signs with it, and permissions survive rebuilds. To use another certificate: `SPATYPE_SIGN_IDENTITY="Apple Development: …" ./scripts/bundle.sh`. To reset permissions: `tccutil reset Accessibility dev.spatype.SpaType`.
 

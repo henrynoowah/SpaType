@@ -46,6 +46,12 @@ public struct Suggestion: Equatable {
     public let deleteCount: Int
     /// Keystrokes to replay after switching to `target`.
     public let replay: [KeyStroke]
+    /// The exact text the replay produces in `target` (spaces included), minus `tailReplay`. Used to
+    /// type the result directly when that doesn't need the target's input method (Korean, plain layouts).
+    public let replacement: String
+    /// Keys of a Korean syllable still being composed (accepted mid-word): replayed through the IME after
+    /// `replacement`, so the user's next key can still join it ("한글로ㄱ" + ㅏ → "한글로가").
+    public let tailReplay: [KeyStroke]
 }
 
 public final class Engine {
@@ -62,6 +68,9 @@ public final class Engine {
         public var extendMin = 0.9
         /// How many not-clearly-correct words right before a detection get folded into the run.
         public var maxLeadingWords = 6
+        /// A word typed this long without a space is judged on every keystroke (no pause or space needed),
+        /// e.g. a whole Korean sentence typed as "gksrmffhrkqwkrl…" with no spaces.
+        public var liveWordMinKeys = 6
         /// Key sequences that are almost always a slip when typed on their own, even if they happen to be
         /// a real word in the current layout ("spa" is 넴). Keyed by the US-QWERTY keys, value = target language.
         /// Ignored right after a word that was clearly typed on purpose ("the spa").
@@ -191,9 +200,23 @@ public final class Engine {
     public func pauseSuggestion(current: SourceDescriptor, alternatives: [SourceDescriptor]) -> Suggestion? {
         guard !currentWord.isEmpty, lastSource == current else { return nil }
         if hasRun { return currentSuggestion(includingCurrentWord: true) }
-        guard case .mismatch(let target) = judgeWord(currentWord, current: current, alternatives: alternatives)
-        else { return nil }
+        guard let target = midWordTarget(current: current, alternatives: alternatives) else { return nil }
         return makeSuggestion(leadingRun(for: target).flatMap { $0 } + currentWord, from: current, target: target)
+    }
+
+    /// The current word is long enough to be judged live, keystroke by keystroke.
+    public var isLongWord: Bool { currentWord.count >= config.liveWordMinKeys }
+
+    /// Judges the half-typed word. Mid-word the last key is often a consonant still waiting for its
+    /// vowel ("gksr" → 한ㄱ), so if the whole word doesn't pass, the word minus its last key may.
+    private func midWordTarget(current: SourceDescriptor, alternatives: [SourceDescriptor]) -> SourceDescriptor? {
+        if case .mismatch(let target) = judgeWord(currentWord, current: current, alternatives: alternatives) {
+            return target
+        }
+        guard currentWord.count > config.minLetters,
+              case .mismatch(let target) = judgeWord(Array(currentWord.dropLast()), current: current, alternatives: alternatives)
+        else { return nil }
+        return target
     }
 
     /// Return/Enter: the text so far is committed (or sent), but if we were mid-run the user is
@@ -226,13 +249,28 @@ public final class Engine {
         let replay = target.kind == .japaneseRomaji ? all.filter { !$0.isSpace } : all
         var preview = render(replay, in: target)
         if target.kind == .japaneseRomaji { preview = preview.trimmingCharacters(in: .whitespaces) }
+        let direct = directText(replay, target: target)
         return Suggestion(
             from: from, target: target,
             original: original.trimmingCharacters(in: .whitespaces),
             preview: preview.trimmingCharacters(in: .whitespaces),
             deleteCount: original.count,
-            replay: replay
+            replay: replay,
+            replacement: direct.text,
+            tailReplay: direct.tail
         )
+    }
+
+    /// Splits off the last Korean syllable when the suggestion ends mid-word (no trailing space).
+    private func directText(_ replay: [KeyStroke], target: SourceDescriptor) -> (text: String, tail: [KeyStroke]) {
+        let full = render(replay, in: target)
+        guard target.kind == .korean2Set, let last = replay.last, !last.isSpace else { return (full, []) }
+        for k in 1...min(5, replay.count) {
+            let head = render(Array(replay.dropLast(k)), in: target)
+            let tail = render(Array(replay.suffix(k)), in: target)
+            if tail.count == 1, head + tail == full { return (head, Array(replay.suffix(k))) }
+        }
+        return (full, [])
     }
 
     // MARK: - Judging

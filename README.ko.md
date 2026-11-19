@@ -26,7 +26,7 @@
 
 1. [Releases](https://github.com/henrynoowah/SpaType/releases/latest)에서 `SpaType-<버전>.zip`을 받아 압축을 풀고, `SpaType.app`을 `응용 프로그램` 폴더로 옮겨요.
 2. Apple 공증(notarization)을 받지 않은 앱이라 처음 열 때 macOS가 막아요. **우클릭 → 열기**를 누르거나, 시스템 설정 → 개인정보 보호 및 보안 아래쪽의 **그래도 열기**를 눌러요.
-3. **손쉬운 사용**과 **입력 모니터링**에서 SpaType을 허용해요. 메뉴바 아이콘이 `⌨︎`(점 없음)가 되면 동작 중이에요.
+3. **손쉬운 사용**과 **입력 모니터링**에서 SpaType을 허용해요. 메뉴바의 키캡 아이콘이 흐린 상태에서 선명해지면 동작 중이에요.
 
 Apple silicon과 Intel Mac 모두 지원하는 유니버설 앱이에요.
 
@@ -43,7 +43,7 @@ swift test                    # 엔진 단위 테스트 (판정 로직, 두벌�
 ./scripts/bundle.sh --run     # build/SpaType.app 생성 후 실행
 ```
 
-처음 실행하면 **손쉬운 사용**과 **입력 모니터링** 권한을 요청해요. 시스템 설정 → 개인정보 보호 및 보안에서 SpaType을 허용하면 2초 안에 자동으로 감지를 시작해요 (메뉴바 아이콘 `⌨︎·` → `⌨︎`).
+처음 실행하면 **손쉬운 사용**과 **입력 모니터링** 권한을 요청해요. 시스템 설정 → 개인정보 보호 및 보안에서 SpaType을 허용하면 2초 안에 자동으로 감지를 시작해요 (메뉴바 키캡 아이콘이 흐림 → 선명).
 
 > **권한은 앱 서명에 묶여 있어요.** ad-hoc 서명은 빌드할 때마다 바뀌어서 macOS가 권한을 잊어버려요. `scripts/make-dev-cert.sh`로 자체 서명 인증서("SpaType Dev")를 키체인에 한 번 만들어 두면, `bundle.sh`가 그걸로 서명해서 다시 빌드해도 권한이 유지돼요. 다른 인증서를 쓰려면 `SPATYPE_SIGN_IDENTITY="Apple Development: …" ./scripts/bundle.sh`, 권한을 초기화하려면 `tccutil reset Accessibility dev.spatype.SpaType`.
 

@@ -43,10 +43,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         monitor.handler = { [weak self] type, event in
             let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
             let flags = event.flags
+            // The tap delivers on the main run loop. Handle each key right here, in order, so that by the
+            // time Tab arrives the engine has seen every key typed before it.
             if self?.interceptAcceptKey(type: type, keyCode: keyCode, flags: flags) == true { return true }
-            if type != .keyUp {
-                DispatchQueue.main.async { self?.handle(type: type, keyCode: keyCode, flags: flags) }
-            }
+            if type != .keyUp { self?.handle(type: type, keyCode: keyCode, flags: flags) }
             return false
         }
         startWhenPermitted(prompt: true)
@@ -115,7 +115,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if IsSecureEventInputEnabled() || isExcludedApp { resetAll(); return }
         if keyCode == USLayout.delete {
             engine.backspace()
-            if !engine.hasRun { hidePanel() }
+            if !engine.hasRun, !engine.isLongWord { hidePanel() }
             schedulePause()
             return
         }
@@ -135,8 +135,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if engine.type(stroke, current: current, alternatives: catalog.sources) != nil {
             scheduleShow()
         } else {
-            if !engine.hasRun { hidePanel() }
-            // Mid-word inside a run the panel stays up; either way, re-judge if typing pauses here.
+            if !engine.hasRun, !engine.isLongWord { hidePanel() }
+            // Mid-word inside a run (or a long word) the panel stays up; either way, re-judge.
             schedulePause()
         }
     }
@@ -168,15 +168,21 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         guard type == .keyDown, enabled, !corrector.isBusy,
               flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift]).isEmpty,
-              panel.isVisible, acceptableSuggestion() != nil
+              panel.isVisible, let suggestion = acceptableSuggestion()
         else { return false }
         swallowingTabUp = true
-        DispatchQueue.main.async { [weak self] in self?.acceptSuggestion() }
+        // Capture the suggestion now; apply it after the tap callback returns.
+        DispatchQueue.main.async { [weak self] in self?.apply(suggestion) }
         return true
     }
 
     private func acceptSuggestion() {
         guard panel.isVisible, let suggestion = acceptableSuggestion() else { return }
+        apply(suggestion)
+    }
+
+    private func apply(_ suggestion: Suggestion) {
+        guard !corrector.isBusy else { return }
         hidePanel()
         engine.reset()
         corrector.apply(suggestion, catalog: catalog) { [weak self] in
@@ -184,8 +190,15 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// What accepting would do right now, computed from the engine's current state (not from what the
+    /// panel happened to show last), so a just-typed key is never left out or left behind.
     private func acceptableSuggestion() -> Suggestion? {
-        pausedSuggestion ?? engine.currentSuggestion(includingCurrentWord: true)
+        if let run = engine.currentSuggestion(includingCurrentWord: true) { return run }
+        if let current = catalog.current,
+           let live = engine.pauseSuggestion(current: current, alternatives: catalog.sources) {
+            return live
+        }
+        return pausedSuggestion
     }
 
     private var isExcludedApp: Bool {
@@ -209,12 +222,15 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func schedulePause() {
         pauseWork?.cancel()
-        // Once we know the user is in the wrong source, follow every keystroke instead of waiting.
-        let delay = engine.isHot ? 0.0 : pauseDelay
+        // Follow every keystroke instead of waiting once we know the user is in the wrong source,
+        // or when a long first word is being typed without spaces.
+        let delay = engine.isHot || engine.isLongWord ? 0.0 : pauseDelay
         let work = DispatchWorkItem { [weak self] in
-            guard let self, let current = self.catalog.current,
-                  let suggestion = self.engine.pauseSuggestion(current: current, alternatives: self.catalog.sources)
-            else { return }
+            guard let self, let current = self.catalog.current else { return }
+            guard let suggestion = self.engine.pauseSuggestion(current: current, alternatives: self.catalog.sources) else {
+                if !self.engine.hasRun { self.hidePanel() }   // the growing word stopped looking wrong
+                return
+            }
             self.pausedSuggestion = suggestion
             self.panel.show(suggestion, near: CaretLocator.caretRect())
         }
@@ -243,12 +259,15 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
+        statusItem.button?.image = MenuBarIcon.make()
         updateStatusTitle()
     }
 
+    /// Dims the menu bar icon while detection is paused or permissions are missing.
     private func updateStatusTitle() {
         let active = enabled && monitor.isRunning
-        statusItem?.button?.title = active ? "⌨︎" : "⌨︎·"
+        statusItem?.button?.appearsDisabled = !active
+        statusItem?.button?.toolTip = active ? "SpaType" : "SpaType (일시정지 또는 권한 필요)"
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {

@@ -90,6 +90,29 @@ final class EngineTests: XCTestCase {
         XCTAssertEqual(s.replay.count, "gksrmffh rkqwkrl qkRuTdmf Eo ".count)
     }
 
+    func testReplacementIsTheExactTextIncludingSpaces() throws {
+        let s = try XCTUnwrap(feed("gksrmffh rkqwkrl ", current: en, alternatives: [en, ko]))
+        XCTAssertEqual(s.replacement, "한글로 갑자기 ", "typed directly, so the trailing space must be kept")
+    }
+
+    func testMidWordKeepsLastSyllableForTheIME() throws {
+        let engine = Engine(layoutRenderer: FakeLayouts(), judge: FakeJudge())
+        for stroke in KeyStroke.from(ascii: "gksrmffh rk") { engine.type(stroke, current: en, alternatives: [en, ko]) }
+        let s = try XCTUnwrap(engine.currentSuggestion(includingCurrentWord: true))
+        XCTAssertEqual(s.replacement, "한글로 ")
+        XCTAssertEqual(s.tailReplay, KeyStroke.from(ascii: "rk"), "가 stays open for a following ㄴ etc.")
+    }
+
+    func testDanglingConsonantIsTheTail() throws {
+        let engine = Engine(layoutRenderer: FakeLayouts(), judge: FakeJudge())
+        for stroke in KeyStroke.from(ascii: "gksrmffhr") { engine.type(stroke, current: en, alternatives: [en, ko]) }
+        let s = try XCTUnwrap(engine.pauseSuggestion(current: en, alternatives: [en, ko]))
+        // The ㄱ becomes 로's final consonant (록), so the whole syllable stays open for the IME:
+        // a following vowel then splits it back into 로 + 가, just like typing by hand.
+        XCTAssertEqual(s.replacement, "한글")
+        XCTAssertEqual(s.tailReplay, KeyStroke.from(ascii: "fhr"))
+    }
+
     func testKoreanToEnglish() throws {
         let s = try XCTUnwrap(feed("hello world ", current: ko, alternatives: [en, ko]))
         XCTAssertEqual(s.target, en)
@@ -205,6 +228,24 @@ final class EngineTests: XCTestCase {
         engine.lineBreak()
         for stroke in KeyStroke.from(ascii: "dl") { engine.type(stroke, current: ko, alternatives: [en, ko]) }
         XCTAssertNil(engine.pauseSuggestion(current: ko, alternatives: [en, ko]))
+    }
+
+    func testLongWordWithoutSpacesIsJudgedLive() throws {
+        let engine = Engine(layoutRenderer: FakeLayouts(), judge: FakeJudge())
+        for stroke in KeyStroke.from(ascii: "gksrmffhrkqwkrl") { engine.type(stroke, current: en, alternatives: [en, ko]) }
+        XCTAssertTrue(engine.isLongWord)
+        let s = try XCTUnwrap(engine.pauseSuggestion(current: en, alternatives: [en, ko]))
+        XCTAssertEqual(s.preview, "한글로갑자기")
+        XCTAssertEqual(s.deleteCount, "gksrmffhrkqwkrl".count)
+    }
+
+    func testLongWordEndingInDanglingConsonantStillMatches() throws {
+        // "gksrmffhr" = 한글록 — the ㄱ is waiting to move on to a following vowel.
+        let engine = Engine(layoutRenderer: FakeLayouts(), judge: FakeJudge())
+        for stroke in KeyStroke.from(ascii: "gksrmffhr") { engine.type(stroke, current: en, alternatives: [en, ko]) }
+        let s = try XCTUnwrap(engine.pauseSuggestion(current: en, alternatives: [en, ko]))
+        XCTAssertEqual(s.target, ko)
+        XCTAssertEqual(s.replay.count, 9, "the dangling key is replayed too")
     }
 
     func testRunEndsOnCorrectWord() {
