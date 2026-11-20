@@ -69,6 +69,23 @@ enum CaretLocator {
         return CGRect(origin: position, size: size)
     }
 
+    /// The character right before the caret in the focused text field, if the app exposes it.
+    static func characterBeforeCaret() -> Character? {
+        let systemWide = AXUIElementCreateSystemWide()
+        guard let element: AXUIElement = copy(systemWide, kAXFocusedUIElementAttribute),
+              let rangeValue: AXValue = copy(element, kAXSelectedTextRangeAttribute)
+        else { return nil }
+        var range = CFRange()
+        guard AXValueGetValue(rangeValue, .cfRange, &range), range.location > 0 else { return nil }
+        var query = CFRange(location: range.location - 1, length: 1)
+        guard let axQuery = AXValueCreate(.cfRange, &query) else { return nil }
+        var value: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(
+            element, kAXStringForRangeParameterizedAttribute as CFString, axQuery, &value
+        ) == .success, let text = value as? String else { return nil }
+        return text.last
+    }
+
     /// Electron/Chromium apps only build their accessibility tree when asked to.
     static func enableAccessibility(for pid: pid_t) {
         let app = AXUIElementCreateApplication(pid)

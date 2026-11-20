@@ -105,7 +105,16 @@ final class Corrector {
         // typing ABC; the shortcut goes through the same path as a manual switch, so the app follows.
         // It only lands on `target` when that is the previous source (always, with two sources).
         if let hotkey = Self.previousSourceHotkey() {
-            Self.press(hotkey.keyCode, modifiers: hotkey.flags, source: CGEventSource(stateID: .privateState))
+            let source = CGEventSource(stateID: .privateState)
+            if isCurrent() {
+                // The system already says `target`, yet we're correcting text typed in another source: the app
+                // missed that switch. Go to the previous source and back so the app follows this time.
+                Self.press(hotkey.keyCode, modifiers: hotkey.flags, source: source)
+                let deadline = Date().addingTimeInterval(0.8)
+                while Date() < deadline, isCurrent() { usleep(15_000) }
+                usleep(60_000)
+            }
+            Self.press(hotkey.keyCode, modifiers: hotkey.flags, source: source)
             if waitForSwitch() {
                 usleep(120_000)   // let the app finish switching before keys are replayed
                 return
