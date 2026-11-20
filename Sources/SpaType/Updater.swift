@@ -54,8 +54,13 @@ final class Updater {
     /// Downloads, verifies and swaps in `release`, then relaunches. Calls back (main queue) only on failure.
     func install(_ release: Release, failure: @escaping (Error) -> Void) {
         guard !isInstalling else { return }
-        isInstalling = true
         let bundleURL = Bundle.main.bundleURL
+        // Opened straight from Downloads, macOS runs a read-only copy from a random path: nothing to replace.
+        guard !bundleURL.path.contains("/AppTranslocation/") else {
+            failure(UpdateError("SpaType을 응용 프로그램 폴더로 옮긴 뒤 다시 실행하고 설치해 주세요."))
+            return
+        }
+        isInstalling = true
         URLSession.shared.downloadTask(with: release.zipURL) { [weak self] zip, _, error in
             do {
                 guard let zip else { throw error ?? UpdateError("다운로드에 실패했어요.") }
