@@ -18,6 +18,7 @@ It isn't limited to Korean and English. Any pair of input sources you have enabl
 
 - **Whole sentences**: keep typing after the first detection and the entire sentence is fixed in one go. Typos, numbers and short words in the middle come along.
 - **Live detection**: normally a word is judged at a space or after a short pause (0.35 s). Once a slip is detected, the preview updates on every keystroke, and it carries over to the next line after Enter.
+- **Auto-convert**: once a wrong-source run gets long (16 keys by default), it's fixed at the next space without Tab; keys typed meanwhile are replayed in the new source. Adjust it in menu → **설정…** (Settings): off / gentle (24) / normal (16) / eager (10), with a reset-to-defaults button.
 - **Common slips**: short Korean replies like `spa` (넴), `spq` (넵), `sp` (네), `dmd` (응) and `gjf` (헐) are suggested even when they happen to be English words.
 - **Stays out of the way**: a panel that never takes focus and disappears if you keep typing. Tab is only intercepted while the panel is showing.
 - **On-device**: nothing you type is stored or sent anywhere. The only network access is the update check (GitHub, once a day).

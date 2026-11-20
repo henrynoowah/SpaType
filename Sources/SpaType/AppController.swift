@@ -25,6 +25,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var lastShiftRelease: TimeInterval = 0
     // Tab accepts the suggestion; we also swallow its matching key-up.
     private var swallowingTabUp = false
+    /// Keys held back while a correction runs (their key-ups are swallowed too).
+    private var heldKeys: Set<UInt16> = []
 
     /// Apps where "gibberish" is usually intentional (shells, editors, password managers).
     private let excludedBundlePrefixes = [
@@ -36,6 +38,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AutoConvert.registerDefaults()
         catalog.reload()
         frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         setUpStatusItem()
@@ -44,6 +47,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         monitor.handler = { [weak self] type, event in
             let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
             let flags = event.flags
+            if self?.holdDuringCorrection(type: type, keyCode: keyCode, flags: flags) == true { return true }
             // The tap delivers on the main run loop. Handle each key right here, in order, so that by the
             // time Tab arrives the engine has seen every key typed before it.
             if self?.interceptAcceptKey(type: type, keyCode: keyCode, flags: flags) == true { return true }
@@ -148,8 +152,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let current = catalog.current, catalog.sources.count > 1 else { resetAll(); return }
 
         let stroke = KeyStroke(keyCode: keyCode, shift: flags.contains(.maskShift))
-        if engine.type(stroke, current: current, alternatives: catalog.sources) != nil {
-            scheduleShow()
+        if let suggestion = engine.type(stroke, current: current, alternatives: catalog.sources) {
+            if shouldAutoConvert(suggestion) {
+                apply(suggestion)   // keys typed from here on are held and replayed after the fix
+            } else {
+                scheduleShow()
+            }
         } else {
             if !engine.hasRun, !engine.isLongWord { hidePanel() }
             // Mid-word inside a run (or a long word) the panel stays up; either way, re-judge.
@@ -173,6 +181,26 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 lastShiftRelease = now
             }
         }
+    }
+
+    /// A wrong-source run long enough (per Settings) is converted at the word boundary without Tab.
+    private func shouldAutoConvert(_ suggestion: Suggestion) -> Bool {
+        guard let threshold = AutoConvert.current.threshold, suggestion.target.kind != .japaneseRomaji else {
+            return false
+        }
+        return suggestion.replay.filter { !$0.isSpace }.count >= threshold
+    }
+
+    /// While a correction is typing, the user's keys would land in the middle of it (and in the old source):
+    /// hold them, and the corrector replays them once it's done. Shortcuts pass through.
+    private func holdDuringCorrection(type: CGEventType, keyCode: UInt16, flags: CGEventFlags) -> Bool {
+        if type == .keyUp { return heldKeys.remove(keyCode) != nil }
+        guard type == .keyDown, corrector.isBusy,
+              flags.intersection([.maskCommand, .maskControl, .maskAlternate]).isEmpty
+        else { return false }
+        heldKeys.insert(keyCode)
+        corrector.enqueue(KeyStroke(keyCode: keyCode, shift: flags.contains(.maskShift)))
+        return true
     }
 
     /// Called synchronously from the event tap (main thread). Swallows Tab only while a suggestion is showing.
@@ -317,6 +345,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(.separator())
         }
 
+        let settings = NSMenuItem(title: "설정…", action: #selector(openSettings), keyEquivalent: ",")
+        settings.target = self
+        menu.addItem(settings)
+
         let update: NSMenuItem
         if updater.isInstalling {
             update = NSMenuItem(title: "업데이트 설치 중…", action: nil, keyEquivalent: "")
@@ -337,6 +369,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         enabled.toggle()
         resetAll()
         updateStatusTitle()
+    }
+
+    @objc private func openSettings() {
+        SettingsWindow.show()
     }
 
     @objc private func checkForUpdate() {

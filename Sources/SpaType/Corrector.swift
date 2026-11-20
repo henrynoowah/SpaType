@@ -15,12 +15,19 @@ let log = Logger(subsystem: "SpaType", category: "debug")
 final class Corrector {
     private let queue = DispatchQueue(label: "spatype.corrector")
     private(set) var isBusy = false
+    /// Keys the user typed while a correction was running (main thread). Replayed afterwards through the
+    /// new source, so typing on through an auto-conversion neither interleaves nor comes out in the old layout.
+    private var pending: [KeyStroke] = []
+
+    func enqueue(_ stroke: KeyStroke) { pending.append(stroke) }
 
     func apply(_ suggestion: Suggestion, catalog: InputSourceCatalog, completion: @escaping () -> Void) {
         guard !isBusy else { return }
         isBusy = true
         queue.async {
             let source = CGEventSource(stateID: .privateState)
+            // Let the key that triggered this (the space, for an auto-conversion) reach the app first.
+            usleep(30_000)
 
             for _ in 0..<suggestion.deleteCount {
                 Self.press(CGKeyCode(USLayout.delete), shift: false, source: source)
@@ -58,9 +65,23 @@ final class Corrector {
                 }
             }
 
-            DispatchQueue.main.async {
-                self.isBusy = false
-                completion()
+            // Checking for more keys and leaving the busy state happen together on main, so a key typed
+            // in between can't be swallowed without being replayed.
+            while true {
+                let keys: [KeyStroke] = DispatchQueue.main.sync {
+                    let keys = self.pending
+                    self.pending = []
+                    if keys.isEmpty {
+                        self.isBusy = false
+                        completion()
+                    }
+                    return keys
+                }
+                if keys.isEmpty { break }
+                for stroke in keys {
+                    Self.press(CGKeyCode(stroke.keyCode), shift: stroke.shift, source: source)
+                    usleep(4_000)
+                }
             }
         }
     }
