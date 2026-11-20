@@ -24,6 +24,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var lineStrokes: [KeyStroke] = []
     private var lineSource: SourceDescriptor?
     private var aiWork: DispatchWorkItem?
+    /// The menu bar says an input method (한) is on, but the app is actually getting plain letters — a switch
+    /// the app never picked up. While set, keys are judged as typed through this layout instead.
+    private var staleActual: SourceDescriptor?
+    private var staleHits = 0
     private var aiGeneration = 0
 
     // Double-Shift detection
@@ -89,6 +93,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             self.frontmostBundleID = app?.bundleIdentifier
             if let pid = app?.processIdentifier { CaretLocator.enableAccessibility(for: pid) }
+            self.clearStale()
             self.resetAll()
         }
 
@@ -111,6 +116,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func selectedSourceChanged() {
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.corrector.isBusy else { return }
+            self.clearStale()
             self.resetAll()
         }
     }
@@ -159,13 +165,26 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             resetAll()   // shortcuts, arrows, return, tab, esc …
             return
         }
-        guard let current = catalog.current, catalog.sources.count > 1 else { resetAll(); return }
+        guard let reported = catalog.current, let current = currentSource, catalog.sources.count > 1 else {
+            resetAll(); return
+        }
 
         let stroke = KeyStroke(keyCode: keyCode, shift: flags.contains(.maskShift))
         if lineSource != current { lineStrokes = [] }
         lineSource = current
         lineStrokes.append(stroke)
-        if let suggestion = engine.type(stroke, current: current, alternatives: catalog.sources) {
+        judge(engine.type(stroke, current: current, alternatives: catalog.sources))
+        if reported.kind == .korean2Set, staleActual == nil, let typed = stroke.ascii, typed.isLetter {
+            // Let the app draw the key, then look at what actually landed before the caret.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.checkStale(stroke: stroke, typed: typed, reported: reported)
+            }
+        }
+    }
+
+    /// What to do after the engine has seen a key.
+    private func judge(_ suggestion: Suggestion?) {
+        if let suggestion {
             if shouldAutoConvert(suggestion) {
                 apply(suggestion)   // keys typed from here on are held and replayed after the fix
             } else {
@@ -176,6 +195,34 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // Mid-word inside a run (or a long word) the panel stays up; either way, re-judge.
             schedulePause()
         }
+    }
+
+    /// The source keys are really going through: the reported one, unless the app missed a switch.
+    private var currentSource: SourceDescriptor? { staleActual ?? catalog.current }
+
+    /// With 한 on, a letter key should leave Hangul before the caret. The plain letter twice in a row means
+    /// the app is really in a layout (ABC): judge the line again as typed there, so the gibberish is caught.
+    private func checkStale(stroke: KeyStroke, typed: Character, reported: SourceDescriptor) {
+        guard staleActual == nil, catalog.current == reported, !corrector.isBusy,
+              let before = CaretLocator.characterBeforeCaret()
+        else { return }
+        guard before == typed,
+              let actual = catalog.sources.first(where: { $0.kind == .layout && catalog.render([stroke], in: $0) == String(typed) })
+        else { staleHits = 0; return }
+        staleHits += 1
+        guard staleHits >= 2 else { return }
+        log.debug("app is typing \(actual.id, privacy: .public) while the menu bar says \(reported.id, privacy: .public)")
+        staleActual = actual
+        lineSource = actual
+        engine.reset()
+        var last: Suggestion?
+        for key in lineStrokes { last = engine.type(key, current: actual, alternatives: catalog.sources) }
+        judge(last)
+    }
+
+    private func clearStale() {
+        staleActual = nil
+        staleHits = 0
     }
 
     private func handleFlagsChanged(_ keyCode: UInt16, _ flags: CGEventFlags) {
@@ -250,6 +297,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         engine.reset()
         lineStrokes = []
         corrector.apply(suggestion, catalog: catalog) { [weak self] in
+            self?.clearStale()   // the corrector re-synced the app with the switch
             self?.engine.reset()
         }
     }
@@ -258,7 +306,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// panel happened to show last), so a just-typed key is never left out or left behind.
     private func acceptableSuggestion() -> Suggestion? {
         if let run = engine.currentSuggestion(includingCurrentWord: true) { return run }
-        if let current = catalog.current,
+        if let current = currentSource,
            let live = engine.pauseSuggestion(current: current, alternatives: catalog.sources) {
             return live
         }
@@ -291,7 +339,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // key first, so the caret position we read is current.
         let delay = engine.isHot || engine.isLongWord ? 0.03 : pauseDelay
         let work = DispatchWorkItem { [weak self] in
-            guard let self, let current = self.catalog.current else { return }
+            guard let self, let current = self.currentSource else { return }
             guard let suggestion = self.engine.pauseSuggestion(current: current, alternatives: self.catalog.sources) else {
                 if !self.engine.hasRun {
                     self.hidePanel()   // the growing word stopped looking wrong
