@@ -94,6 +94,24 @@ final class Corrector {
     /// so the replayed keys aren't typed through the old layout.
     private func switchInputSource(to target: SourceDescriptor, catalog: InputSourceCatalog) {
         func isCurrent() -> Bool { DispatchQueue.main.sync { catalog.current?.id == target.id } }
+        func waitForSwitch() -> Bool {
+            let deadline = Date().addingTimeInterval(0.8)
+            while Date() < deadline, !isCurrent() { usleep(15_000) }
+            return isCurrent()
+        }
+
+        // Press the user's own "Select the previous input source" shortcut first. A switch requested from a
+        // background app (TISSelectInputSource) can leave the menu bar on 한 while the frontmost app keeps
+        // typing ABC; the shortcut goes through the same path as a manual switch, so the app follows.
+        // It only lands on `target` when that is the previous source (always, with two sources).
+        if let hotkey = Self.previousSourceHotkey() {
+            Self.press(hotkey.keyCode, modifiers: hotkey.flags, source: CGEventSource(stateID: .privateState))
+            if waitForSwitch() {
+                usleep(120_000)   // let the app finish switching before keys are replayed
+                return
+            }
+            log.debug("previous-source shortcut didn't land on \(target.id, privacy: .public); selecting directly")
+        }
 
         for attempt in 0..<2 {
             DispatchQueue.main.sync { catalog.select(target) }
@@ -119,6 +137,36 @@ final class Corrector {
             event.keyboardSetUnicodeString(stringLength: units.count, unicodeString: &units)
             event.setIntegerValueField(.eventSourceUserData, value: KeyMonitor.injectedMarker)
             event.post(tap: .cghidEventTap)
+        }
+    }
+
+    /// The "Select the previous input source" shortcut (System Settings › Keyboard › Keyboard Shortcuts ›
+    /// Input Sources), or nil when it's turned off. Untouched, it isn't in the plist: macOS default ⌃Space.
+    private static func previousSourceHotkey() -> (keyCode: CGKeyCode, flags: CGEventFlags)? {
+        let all = CFPreferencesCopyAppValue("AppleSymbolicHotKeys" as CFString, "com.apple.symbolichotkeys" as CFString)
+        guard let entry = (all as? [String: Any])?["60"] as? [String: Any] else { return (49, .maskControl) }
+        guard (entry["enabled"] as? Bool) == true,
+              let value = entry["value"] as? [String: Any],
+              let parameters = value["parameters"] as? [Int], parameters.count == 3, parameters[1] != 65535
+        else { return nil }
+        return (CGKeyCode(parameters[1]), CGEventFlags(rawValue: UInt64(parameters[2])))
+    }
+
+    /// A shortcut press: modifier keys down, the key, modifiers up, so system hotkeys see a real chord.
+    private static func press(_ keyCode: CGKeyCode, modifiers: CGEventFlags, source: CGEventSource?) {
+        let modifierKeys: [(CGEventFlags, CGKeyCode)] = [
+            (.maskControl, 59), (.maskAlternate, 58), (.maskCommand, 55), (.maskShift, 56),
+        ].filter { modifiers.contains($0.0) }
+        var held: CGEventFlags = []
+        for (flag, key) in modifierKeys {
+            held.insert(flag)
+            post(key, down: true, flags: held, source: source)
+        }
+        post(keyCode, down: true, flags: held, source: source)
+        post(keyCode, down: false, flags: held, source: source)
+        for (flag, key) in modifierKeys.reversed() {
+            held.remove(flag)
+            post(key, down: false, flags: held, source: source)
         }
     }
 
