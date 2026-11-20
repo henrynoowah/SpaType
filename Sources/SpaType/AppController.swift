@@ -9,6 +9,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let monitor = KeyMonitor()
     private let panel = SuggestionPanel()
     private let corrector = Corrector()
+    private let updater = Updater()
 
     private var statusItem: NSStatusItem!
     private var enabled = true
@@ -50,6 +51,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return false
         }
         startWhenPermitted(prompt: true)
+
+        updater.check()
+        Timer.scheduledTimer(withTimeInterval: 86_400, repeats: true) { [weak self] _ in self?.updater.check() }
     }
 
     private func startWhenPermitted(prompt: Bool) {
@@ -77,19 +81,31 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.resetAll()
         }
 
+        // .deliverImmediately: AppKit suspends distributed notifications for inactive apps, and a menu bar
+        // app is always inactive, so the default (.coalesce) would deliver these late, in batches.
         let distributed = DistributedNotificationCenter.default()
         distributed.addObserver(
-            forName: NSNotification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String),
-            object: nil, queue: .main
-        ) { [weak self] _ in
-            // The user switched by hand (e.g. noticed the gibberish) — our bookkeeping is stale.
+            self, selector: #selector(selectedSourceChanged),
+            name: NSNotification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String),
+            object: nil, suspensionBehavior: .deliverImmediately
+        )
+        distributed.addObserver(
+            self, selector: #selector(enabledSourcesChanged),
+            name: NSNotification.Name(kTISNotifyEnabledKeyboardInputSourcesChanged as String),
+            object: nil, suspensionBehavior: .deliverImmediately
+        )
+    }
+
+    /// The user switched by hand (e.g. noticed the gibberish) — our bookkeeping is stale.
+    @objc private func selectedSourceChanged() {
+        DispatchQueue.main.async { [weak self] in
             guard let self, !self.corrector.isBusy else { return }
             self.resetAll()
         }
-        distributed.addObserver(
-            forName: NSNotification.Name(kTISNotifyEnabledKeyboardInputSourcesChanged as String),
-            object: nil, queue: .main
-        ) { [weak self] _ in
+    }
+
+    @objc private func enabledSourcesChanged() {
+        DispatchQueue.main.async { [weak self] in
             self?.catalog.reload()
             self?.resetAll()
         }
@@ -223,8 +239,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func schedulePause() {
         pauseWork?.cancel()
         // Follow every keystroke instead of waiting once we know the user is in the wrong source,
-        // or when a long first word is being typed without spaces.
-        let delay = engine.isHot || engine.isLongWord ? 0.0 : pauseDelay
+        // or when a long first word is being typed without spaces. The short beat lets the app draw the
+        // key first, so the caret position we read is current.
+        let delay = engine.isHot || engine.isLongWord ? 0.03 : pauseDelay
         let work = DispatchWorkItem { [weak self] in
             guard let self, let current = self.catalog.current else { return }
             guard let suggestion = self.engine.pauseSuggestion(current: current, alternatives: self.catalog.sources) else {
@@ -300,6 +317,18 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(.separator())
         }
 
+        let update: NSMenuItem
+        if updater.isInstalling {
+            update = NSMenuItem(title: "업데이트 설치 중…", action: nil, keyEquivalent: "")
+            update.isEnabled = false
+        } else if let release = updater.available {
+            update = NSMenuItem(title: "SpaType \(release.version) 설치…", action: #selector(installUpdate), keyEquivalent: "")
+        } else {
+            update = NSMenuItem(title: "업데이트 확인 (현재 \(updater.currentVersion))", action: #selector(checkForUpdate), keyEquivalent: "")
+        }
+        update.target = self
+        menu.addItem(update)
+
         let quit = NSMenuItem(title: "SpaType 종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
     }
@@ -308,6 +337,51 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         enabled.toggle()
         resetAll()
         updateStatusTitle()
+    }
+
+    @objc private func checkForUpdate() {
+        updater.check { [weak self] release in
+            if release != nil {
+                self?.installUpdate()
+            } else {
+                Self.alert("최신 버전이에요", "SpaType \(self?.updater.currentVersion ?? "") 을(를) 쓰고 있어요.")
+            }
+        }
+    }
+
+    @objc private func installUpdate() {
+        guard let release = updater.available else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        let confirm = NSAlert()
+        confirm.messageText = "SpaType \(release.version) 설치"
+        confirm.informativeText = "새 버전을 받아 설치하고 다시 실행해요."
+        confirm.addButton(withTitle: "설치")
+        confirm.addButton(withTitle: "릴리즈 노트 보기")
+        confirm.addButton(withTitle: "취소")
+        switch confirm.runModal() {
+        case .alertFirstButtonReturn:
+            updater.install(release) { error in
+                if Self.alert("업데이트하지 못했어요", error.localizedDescription, extra: "릴리즈 페이지 열기") {
+                    NSWorkspace.shared.open(release.pageURL)
+                }
+            }
+        case .alertSecondButtonReturn:
+            NSWorkspace.shared.open(release.pageURL)
+        default:
+            break
+        }
+    }
+
+    /// Returns true if the extra button was clicked.
+    @discardableResult
+    private static func alert(_ title: String, _ text: String, extra: String? = nil) -> Bool {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = text
+        alert.addButton(withTitle: "확인")
+        if let extra { alert.addButton(withTitle: extra) }
+        return alert.runModal() == .alertSecondButtonReturn
     }
 
     @objc private func openPrivacySettings() {

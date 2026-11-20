@@ -1,6 +1,10 @@
 import CoreGraphics
 import Foundation
+import os
 import SpaTypeCore
+
+/// Debug diagnostics: `log stream --level debug --predicate 'subsystem == "SpaType"'`
+let log = Logger(subsystem: "SpaType", category: "debug")
 
 /// Applies a suggestion: delete what's on screen, put the intended text in, and switch input source.
 ///
@@ -34,7 +38,8 @@ final class Corrector {
                 }
                 usleep(20_000)
                 if suggestion.tailReplay.isEmpty {
-                    DispatchQueue.main.sync { catalog.select(suggestion.target) }
+                    // Verified: an unconfirmed CJK select can leave TIS saying 한글 while the app still types ABC.
+                    self.switchInputSource(to: suggestion.target, catalog: catalog)
                 } else {
                     // A syllable still being composed goes through the IME so the next key can join it.
                     self.switchInputSource(to: suggestion.target, catalog: catalog)
@@ -76,6 +81,7 @@ final class Corrector {
             if isCurrent() { break }
             if attempt == 0 { usleep(50_000) }   // known TIS flakiness with CJK sources: select again
         }
+        if !isCurrent() { log.debug("switch to \(target.id, privacy: .public) not confirmed") }
 
         // The system reports the new source before the frontmost app's text input has picked it up.
         let firstTime = !warmedUp.contains(target.id)
