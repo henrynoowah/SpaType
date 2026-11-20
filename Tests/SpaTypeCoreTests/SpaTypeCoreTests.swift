@@ -62,8 +62,11 @@ private struct FakeJudge: WordJudging {
         "en": ["hello", "world", "the", "and", "make", "spa"],
         "ru": ["привет", "мир"],
     ]
+    /// One letter off a real word ("wkf" ~ "wok"): SpellJudge scores these 0.45.
+    let nearMisses: Set<String> = ["wkf"]
     func plausibility(of word: String, language: String) -> Double {
-        words[language]?.contains(word.lowercased()) == true ? 1.0 : 0.1
+        if words[language]?.contains(word.lowercased()) == true { return 1.0 }
+        return language == "en" && nearMisses.contains(word.lowercased()) ? 0.45 : 0.1
     }
 }
 
@@ -154,6 +157,18 @@ final class EngineTests: XCTestCase {
         let s = try XCTUnwrap(feed("dl rjtdms dkwlr ", current: en, alternatives: [en, ko]))
         XCTAssertEqual(s.preview, "이 것은 아직")
         XCTAssertEqual(s.deleteCount, "dl rjtdms dkwlr ".count)
+    }
+
+    func testNearMissWordBeforeDetectionJoinsTheRun() throws {
+        // "wkf" looks like an English typo of "wok", but reads as 잘 and the sentence goes on in Korean.
+        let s = try XCTUnwrap(feed("wkf ehlrh dlTsk ", current: en, alternatives: [en, ko]))
+        XCTAssertEqual(s.preview, "잘 되고 있나")
+        XCTAssertEqual(s.deleteCount, "wkf ehlrh dlTsk ".count)
+    }
+
+    func testRealEnglishWordStillEndsTheLeadingWords() throws {
+        let s = try XCTUnwrap(feed("the ehlrh dlTsk ", current: en, alternatives: [en, ko]))
+        XCTAssertEqual(s.preview, "되고 있나")
     }
 
     func testTypoInsideRunDoesNotDropEarlierWords() throws {
