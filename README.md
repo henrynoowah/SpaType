@@ -20,7 +20,7 @@ It isn't limited to Korean and English. Any pair of input sources you have enabl
 - **Live detection**: normally a word is judged at a space or after a short pause (0.35 s). Once a slip is detected, the preview updates on every keystroke, and it carries over to the next line after Enter.
 - **Common slips**: short Korean replies like `spa` (넴), `spq` (넵), `sp` (네), `dmd` (응) and `gjf` (헐) are suggested even when they happen to be English words.
 - **Stays out of the way**: a panel that never takes focus and disappears if you keep typing. Tab is only intercepted while the panel is showing.
-- **On-device**: no network access, and nothing you type is stored.
+- **On-device**: nothing you type is stored or sent anywhere. The only network access is the update check (GitHub, once a day).
 
 ## Install
 
@@ -29,6 +29,8 @@ It isn't limited to Korean and English. Any pair of input sources you have enabl
 3. Allow SpaType under **Accessibility** and **Input Monitoring**. When the keycap icon in the menu bar turns from dimmed to solid, it's running.
 
 The app is universal: it runs on both Apple silicon and Intel Macs.
+
+When a new version is out, the menu bar menu shows **SpaType <version> 설치…** (install). It downloads the release, checks its signature, swaps it in and relaunches; permissions are kept.
 
 ## Requirements
 
@@ -47,7 +49,7 @@ On first launch SpaType asks for **Accessibility** and **Input Monitoring**. Onc
 
 > **Permissions are tied to the app's signature.** Ad-hoc signatures change on every build, so macOS forgets the grant. Run `scripts/make-dev-cert.sh` once to put a self-signed "SpaType Dev" certificate in your keychain; `bundle.sh` signs with it, and permissions survive rebuilds. To use another certificate: `SPATYPE_SIGN_IDENTITY="Apple Development: …" ./scripts/bundle.sh`. To reset permissions: `tccutil reset Accessibility dev.spatype.SpaType`.
 
-`./scripts/release.sh` builds the universal release zip. The app icon can be regenerated with `scripts/make-icon.sh` (drawn in `scripts/make-icon.swift`).
+`./scripts/release.sh` builds the universal release zip. The in-app updater only installs builds signed with the same certificate as the running app, so every release must be signed with the same `SpaType` certificate (the script refuses ad-hoc builds). Pushing a `v<version>` tag makes GitHub Actions sign with that certificate (secrets `SPATYPE_CERT_P12`, `SPATYPE_CERT_PASSWORD`) and publish the release. Lose it and users have to reinstall by hand and grant permissions again. The app icon can be regenerated with `scripts/make-icon.sh` (drawn in `scripts/make-icon.swift`).
 
 ## How it works
 
@@ -90,7 +92,7 @@ Corrections **replay keys** instead of inserting finished text, so Hangul compos
 - Words with digits or symbols (code, URLs) and words under three letters aren't suggested on their own (except the common-slips list).
 - Edit-distance-1 typos like `teh` aren't treated as a wrong input source.
 - Tracking resets on clicks, arrow keys, shortcuts, Tab, app switches and manual input-source switches. Return keeps the text already typed but carries the "wrong source" state to the next line.
-- No network access, nothing you type is stored.
+- Nothing you type is stored or sent. The only network access is the GitHub Releases update check.
 
 ## Known limitations (MVP)
 

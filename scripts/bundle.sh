@@ -20,11 +20,11 @@ mkdir -p "$APP/Contents/Resources"
 cp "Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 # Sign with a stable identity so Accessibility / Input Monitoring grants survive rebuilds.
-# Uses a local self-signed certificate (see scripts/make-dev-cert.sh) if one is in the keychain,
+# Uses the self-signed "SpaType" release certificate (or a local one from scripts/make-dev-cert.sh) if in the keychain,
 # otherwise ad-hoc. Override with:
 #   SPATYPE_SIGN_IDENTITY="Apple Development: you@example.com" ./scripts/bundle.sh
 DEFAULT_IDENTITY="-"
-for candidate in "SpaType Dev" "Retype Dev"; do
+for candidate in "SpaType" "SpaType Dev" "Retype Dev"; do
   if security find-identity -p codesigning 2>/dev/null | grep -q "\"$candidate\""; then
     DEFAULT_IDENTITY="$candidate"
     break
