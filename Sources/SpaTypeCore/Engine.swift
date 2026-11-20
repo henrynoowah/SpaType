@@ -181,9 +181,11 @@ public final class Engine {
             } else {
                 clearRun()
             }
-        } else if looksCorrect(word, in: current) {
+        } else if isRealWord(word, in: current) {
             leadingWords = []
         } else {
+            // Includes near-miss "typos" ("wkf" is one letter off "wok"): they don't start a run, but if the
+            // next words do and they read as clean target-language text ("wkf" → 잘), they join it.
             leadingWords.append(typed)
             if leadingWords.count > config.maxLeadingWords { leadingWords.removeFirst() }
         }
@@ -362,6 +364,13 @@ public final class Engine {
     private func looksCorrect(_ word: [KeyStroke], in source: SourceDescriptor) -> Bool {
         guard Self.normalized(render(word, in: source)) != nil else { return false }
         return score(word, in: source) > config.currentMax
+    }
+
+    /// Clearly a real word in `source` (not just a near-miss typo), so whatever came before can't belong
+    /// to a wrong-source run that starts after it.
+    private func isRealWord(_ word: [KeyStroke], in source: SourceDescriptor) -> Bool {
+        guard Self.normalized(render(word, in: source)) != nil else { return false }
+        return score(word, in: source) >= config.extendMin
     }
 
     private func clearRun() {
