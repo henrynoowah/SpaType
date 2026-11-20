@@ -23,8 +23,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Double-Shift detection
     private var shiftPressedCleanly = false
     private var lastShiftRelease: TimeInterval = 0
-    // Tab accepts the suggestion; we also swallow its matching key-up.
-    private var swallowingTabUp = false
+    // Tab (and Enter, per Settings) accepts the suggestion; we also swallow the matching key-up.
+    private var swallowedUpKey: UInt16?
     /// Keys held back while a correction runs (their key-ups are swallowed too).
     private var heldKeys: Set<UInt16> = []
 
@@ -203,20 +203,26 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return true
     }
 
-    /// Called synchronously from the event tap (main thread). Swallows Tab only while a suggestion is showing.
+    /// Called synchronously from the event tap (main thread). Swallows Tab / Enter only while a suggestion is showing.
     private func interceptAcceptKey(type: CGEventType, keyCode: UInt16, flags: CGEventFlags) -> Bool {
-        guard keyCode == USLayout.tab else { return false }
+        let isEnter = keyCode == 36 || keyCode == 76
+        guard keyCode == USLayout.tab || (isEnter && AutoConvert.enterAccepts) else { return false }
         if type == .keyUp {
-            defer { swallowingTabUp = false }
-            return swallowingTabUp
+            defer { if swallowedUpKey == keyCode { swallowedUpKey = nil } }
+            return swallowedUpKey == keyCode
         }
+        // No modifiers: Shift+Enter stays a plain newline in chat apps.
         guard type == .keyDown, enabled, !corrector.isBusy,
               flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift]).isEmpty,
               panel.isVisible, let suggestion = acceptableSuggestion()
         else { return false }
-        swallowingTabUp = true
-        // Capture the suggestion now; apply it after the tap callback returns.
-        DispatchQueue.main.async { [weak self] in self?.apply(suggestion) }
+        swallowedUpKey = keyCode
+        // Capture the suggestion now; apply it after the tap callback returns. Enter is then replayed
+        // after the fix (through the corrector's held-key queue), so a chat message goes out corrected.
+        DispatchQueue.main.async { [weak self] in
+            self?.apply(suggestion)
+            if isEnter { self?.corrector.enqueue(KeyStroke(keyCode: keyCode, shift: false)) }
+        }
         return true
     }
 

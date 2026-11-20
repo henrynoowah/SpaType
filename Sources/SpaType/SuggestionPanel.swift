@@ -63,6 +63,7 @@ final class SuggestionPanel {
     func show(_ suggestion: Suggestion, near caret: NSRect?) {
         routeLabel.stringValue = "\(suggestion.from.displayName) → \(suggestion.target.displayName)"
         previewLabel.stringValue = suggestion.preview
+        hintLabel.stringValue = AutoConvert.enterAccepts ? "Tab·Enter 바꾸기 · 계속 입력하면 무시" : "Tab 바꾸기 · 계속 입력하면 무시"
 
         guard let content = panel.contentView else { return }
         content.layoutSubtreeIfNeeded()

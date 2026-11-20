@@ -31,13 +31,19 @@ enum AutoConvert: Int, CaseIterable {
         AutoConvert(rawValue: UserDefaults.standard.integer(forKey: key)) ?? defaultValue
     }
 
+    // ponytail: the Enter setting lives here too; split into a Prefs type if a third setting appears.
+    /// Enter, while a suggestion is showing, converts and then still types Enter.
+    static let enterAcceptsKey = "enterAccepts"
+    static var enterAccepts: Bool { UserDefaults.standard.bool(forKey: enterAcceptsKey) }
+
     static func registerDefaults() {
-        UserDefaults.standard.register(defaults: [key: defaultValue.rawValue])
+        UserDefaults.standard.register(defaults: [key: defaultValue.rawValue, enterAcceptsKey: true])
     }
 }
 
 struct SettingsView: View {
     @AppStorage(AutoConvert.key) private var level = AutoConvert.defaultValue.rawValue
+    @AppStorage(AutoConvert.enterAcceptsKey) private var enterAccepts = true
 
     private var caption: String {
         guard let keys = AutoConvert(rawValue: level)?.threshold else {
@@ -56,12 +62,18 @@ struct SettingsView: View {
             .labelsHidden()
             Text(caption).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Divider()
+            Toggle("Enter로도 바꾸기", isOn: $enterAccepts).font(.headline)
+            Text("제안이 떠 있을 때 Enter를 누르면 바꾼 뒤 Enter를 입력해요. 채팅은 고쳐진 문장이 전송돼요.")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Divider()
             HStack {
                 Spacer()
                 Button("기본값으로 초기화") {
                     // Every SpaType preference; registered defaults take over again.
                     UserDefaults.standard.removeObject(forKey: AutoConvert.key)
+                    UserDefaults.standard.removeObject(forKey: AutoConvert.enterAcceptsKey)
                     level = AutoConvert.defaultValue.rawValue
+                    enterAccepts = true
                 }
             }
         }
