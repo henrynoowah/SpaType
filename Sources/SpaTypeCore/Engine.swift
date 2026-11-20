@@ -244,6 +244,11 @@ public final class Engine {
         return makeSuggestion(all, from: from, target: target)
     }
 
+    /// A suggestion for arbitrary keystrokes, e.g. a whole line judged outside the engine (the AI second opinion).
+    public func suggestion(for strokes: [KeyStroke], from: SourceDescriptor, target: SourceDescriptor) -> Suggestion {
+        makeSuggestion(strokes, from: from, target: target)
+    }
+
     private func makeSuggestion(_ all: [KeyStroke], from: SourceDescriptor, target: SourceDescriptor) -> Suggestion {
         let original = render(all, in: from)
         let replay = target.kind == .japaneseRomaji ? all.filter { !$0.isSpace } : all

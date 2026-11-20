@@ -20,6 +20,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var pausedSuggestion: Suggestion?
     private let pauseDelay: TimeInterval = 0.35
 
+    // AI second opinion: the keys of the current line (one source), and a counter that makes stale answers drop.
+    private var lineStrokes: [KeyStroke] = []
+    private var lineSource: SourceDescriptor?
+    private var aiWork: DispatchWorkItem?
+    private var aiGeneration = 0
+
     // Double-Shift detection
     private var shiftPressedCleanly = false
     private var lastShiftRelease: TimeInterval = 0
@@ -38,7 +44,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        AutoConvert.registerDefaults()
+        Prefs.registerDefaults()
         catalog.reload()
         frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         setUpStatusItem()
@@ -56,6 +62,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         startWhenPermitted(prompt: true)
 
+        if Prefs.aiJudge { AIJudge.prewarm() }
         updater.check()
         Timer.scheduledTimer(withTimeInterval: 86_400, repeats: true) { [weak self] _ in self?.updater.check() }
     }
@@ -131,10 +138,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         lastShiftRelease = 0
         pauseWork?.cancel()
         pausedSuggestion = nil
+        cancelAI()
 
         if IsSecureEventInputEnabled() || isExcludedApp { resetAll(); return }
         if keyCode == USLayout.delete {
             engine.backspace()
+            _ = lineStrokes.popLast()
             if !engine.hasRun, !engine.isLongWord { hidePanel() }
             schedulePause()
             return
@@ -142,6 +151,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let shortcutModifiers: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate]
         if (keyCode == 36 || keyCode == 76), flags.intersection(shortcutModifiers).isEmpty {
             engine.lineBreak()   // Return / keypad Enter: keep "wrong source" in mind for the next line
+            lineStrokes = []
             hidePanel()
             return
         }
@@ -152,6 +162,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let current = catalog.current, catalog.sources.count > 1 else { resetAll(); return }
 
         let stroke = KeyStroke(keyCode: keyCode, shift: flags.contains(.maskShift))
+        if lineSource != current { lineStrokes = [] }
+        lineSource = current
+        lineStrokes.append(stroke)
         if let suggestion = engine.type(stroke, current: current, alternatives: catalog.sources) {
             if shouldAutoConvert(suggestion) {
                 apply(suggestion)   // keys typed from here on are held and replayed after the fix
@@ -185,7 +198,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// A wrong-source run long enough (per Settings) is converted at the word boundary without Tab.
     private func shouldAutoConvert(_ suggestion: Suggestion) -> Bool {
-        guard let threshold = AutoConvert.current.threshold, suggestion.target.kind != .japaneseRomaji else {
+        guard let threshold = Prefs.autoConvert.threshold, suggestion.target.kind != .japaneseRomaji else {
             return false
         }
         return suggestion.replay.filter { !$0.isSpace }.count >= threshold
@@ -206,7 +219,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Called synchronously from the event tap (main thread). Swallows Tab / Enter only while a suggestion is showing.
     private func interceptAcceptKey(type: CGEventType, keyCode: UInt16, flags: CGEventFlags) -> Bool {
         let isEnter = keyCode == 36 || keyCode == 76
-        guard keyCode == USLayout.tab || (isEnter && AutoConvert.enterAccepts) else { return false }
+        guard keyCode == USLayout.tab || (isEnter && Prefs.enterAccepts) else { return false }
         if type == .keyUp {
             defer { if swallowedUpKey == keyCode { swallowedUpKey = nil } }
             return swallowedUpKey == keyCode
@@ -235,6 +248,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard !corrector.isBusy else { return }
         hidePanel()
         engine.reset()
+        lineStrokes = []
         corrector.apply(suggestion, catalog: catalog) { [weak self] in
             self?.engine.reset()
         }
@@ -279,7 +293,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let work = DispatchWorkItem { [weak self] in
             guard let self, let current = self.catalog.current else { return }
             guard let suggestion = self.engine.pauseSuggestion(current: current, alternatives: self.catalog.sources) else {
-                if !self.engine.hasRun { self.hidePanel() }   // the growing word stopped looking wrong
+                if !self.engine.hasRun {
+                    self.hidePanel()   // the growing word stopped looking wrong
+                    self.scheduleAIJudge(current: current)
+                }
                 return
             }
             self.pausedSuggestion = suggestion
@@ -289,7 +306,44 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
+    /// The engine found nothing: once typing has really paused, let the on-device model look at the whole line.
+    /// It only suggests (panel + Tab/Enter); it never auto-converts.
+    private func scheduleAIJudge(current: SourceDescriptor) {
+        cancelAI()
+        let words = lineStrokes.split(whereSeparator: \.isSpace)
+        guard Prefs.aiJudge, current.kind == .layout, lineSource == current,
+              words.count >= 2 || lineStrokes.filter({ !$0.isSpace }).count >= 6
+        else { return }
+        let generation = aiGeneration
+        let line = lineStrokes
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            let options = self.catalog.sources.filter { $0.language != current.language }
+                .map { self.engine.suggestion(for: line, from: current, target: $0) }
+            guard let first = options.first else { return }
+            let readings = [first.original] + options.map(\.preview)
+            Task { @MainActor [weak self] in
+                guard let index = await AIJudge.pick(readings), index > 0,
+                      let self, self.aiGeneration == generation, !self.corrector.isBusy
+                else { return }
+                let suggestion = options[index - 1]
+                self.pausedSuggestion = suggestion
+                self.panel.show(suggestion, near: CaretLocator.caretRect())
+            }
+        }
+        aiWork = work
+        // The pause item may have fired after only a beat (long words); the model waits for a real pause.
+        DispatchQueue.main.asyncAfter(deadline: .now() + pauseDelay, execute: work)
+    }
+
+    private func cancelAI() {
+        aiWork?.cancel()
+        aiWork = nil
+        aiGeneration += 1
+    }
+
     private func hidePanel() {
+        cancelAI()
         pendingShow?.cancel()
         pendingShow = nil
         pauseWork?.cancel()
@@ -299,6 +353,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func resetAll() {
+        lineStrokes = []
         engine.reset()
         hidePanel()
     }
