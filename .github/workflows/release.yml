@@ -6,17 +6,22 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # PRs and manual runs: same build and checks, uploaded as an artifact instead of published.
+  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   release:
-    runs-on: macos-15
+    # macOS 26 SDK: needed for the FoundationModels (Apple Intelligence) code to be compiled in.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
       - name: Check tag matches Info.plist
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)"
           [ "v$VERSION" = "$GITHUB_REF_NAME" ] || { echo "Tag $GITHUB_REF_NAME != Info.plist $VERSION"; exit 1; }
@@ -41,7 +46,23 @@ jobs:
           SPATYPE_SIGN_IDENTITY: SpaType
         run: ./scripts/release.sh
 
+      - name: Check FoundationModels is compiled in and weak-linked
+        # Strongly linked, the app would crash at launch on macOS 13–25.
+        run: |
+          BIN=build/SpaType.app/Contents/MacOS/SpaType
+          lipo "$BIN" -thin arm64 -output "$RUNNER_TEMP/arm64"   # Apple Intelligence code is arm64-only
+          otool -l "$RUNNER_TEMP/arm64" | grep -B3 FoundationModels.framework | tee /dev/stderr | grep -q LC_LOAD_WEAK_DYLIB \
+            || { echo "FoundationModels missing or not weak-linked" >&2; exit 1; }
+
+      - name: Upload build (manual runs)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpaType-build
+          path: build/SpaType-*.zip
+
       - name: Publish
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

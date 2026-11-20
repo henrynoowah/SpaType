@@ -73,6 +73,14 @@ final class EngineTests: XCTestCase {
     let ja = SourceDescriptor(id: "ja", language: "ja", kind: .japaneseRomaji, displayName: "Hiragana")
     let ru = SourceDescriptor(id: "ru", language: "ru", kind: .layout, displayName: "Russian")
 
+    func testSuggestionForArbitraryStrokes() {
+        let engine = Engine(layoutRenderer: FakeLayouts(), judge: FakeJudge())
+        let s = engine.suggestion(for: KeyStroke.from(ascii: "dkssud wkf"), from: en, target: ko)
+        XCTAssertEqual(s.preview, "안녕 잘")
+        XCTAssertEqual(s.original, "dkssud wkf")
+        XCTAssertEqual(s.deleteCount, 10)
+    }
+
     func feed(_ text: String, current: SourceDescriptor, alternatives: [SourceDescriptor]) -> Suggestion? {
         let engine = Engine(layoutRenderer: FakeLayouts(), judge: FakeJudge())
         var last: Suggestion?

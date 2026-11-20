@@ -5,7 +5,6 @@ import SwiftUI
 enum AutoConvert: Int, CaseIterable {
     case off, gentle, normal, eager
 
-    static let key = "autoConvert"
     static let defaultValue = AutoConvert.normal
 
     /// Keys typed in the run (spaces excluded) before converting on its own.
@@ -27,23 +26,34 @@ enum AutoConvert: Int, CaseIterable {
         }
     }
 
-    static var current: AutoConvert {
-        AutoConvert(rawValue: UserDefaults.standard.integer(forKey: key)) ?? defaultValue
-    }
+}
 
-    // ponytail: the Enter setting lives here too; split into a Prefs type if a third setting appears.
+/// SpaType's preferences (UserDefaults). Every key here is covered by the Settings reset button.
+enum Prefs {
+    static let autoConvertKey = "autoConvert"
     /// Enter, while a suggestion is showing, converts and then still types Enter.
     static let enterAcceptsKey = "enterAccepts"
+    /// Ask the on-device Apple model when the engine finds nothing in a paused line.
+    static let aiJudgeKey = "aiJudge"
+    static let all = [autoConvertKey, enterAcceptsKey, aiJudgeKey]
+
+    static var autoConvert: AutoConvert {
+        AutoConvert(rawValue: UserDefaults.standard.integer(forKey: autoConvertKey)) ?? AutoConvert.defaultValue
+    }
     static var enterAccepts: Bool { UserDefaults.standard.bool(forKey: enterAcceptsKey) }
+    static var aiJudge: Bool { UserDefaults.standard.bool(forKey: aiJudgeKey) && AIJudge.isAvailable }
 
     static func registerDefaults() {
-        UserDefaults.standard.register(defaults: [key: defaultValue.rawValue, enterAcceptsKey: true])
+        UserDefaults.standard.register(defaults: [
+            autoConvertKey: AutoConvert.defaultValue.rawValue, enterAcceptsKey: true, aiJudgeKey: true,
+        ])
     }
 }
 
 struct SettingsView: View {
-    @AppStorage(AutoConvert.key) private var level = AutoConvert.defaultValue.rawValue
-    @AppStorage(AutoConvert.enterAcceptsKey) private var enterAccepts = true
+    @AppStorage(Prefs.autoConvertKey) private var level = AutoConvert.defaultValue.rawValue
+    @AppStorage(Prefs.enterAcceptsKey) private var enterAccepts = true
+    @AppStorage(Prefs.aiJudgeKey) private var aiJudge = true
 
     private var caption: String {
         guard let keys = AutoConvert(rawValue: level)?.threshold else {
@@ -66,14 +76,22 @@ struct SettingsView: View {
             Text("제안이 떠 있을 때 Enter를 누르면 바꾼 뒤 Enter를 입력해요. 채팅은 고쳐진 문장이 전송돼요.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Divider()
+            Toggle("AI 문맥 판정 (Apple Intelligence)", isOn: $aiJudge)
+                .font(.headline)
+                .disabled(!AIJudge.isAvailable)
+            Text(AIJudge.isAvailable
+                 ? "감지가 안 된 문장을 잠깐 멈췄을 때 기기 안의 Apple 모델로 한 번 더 확인해요. 내용은 기기 밖으로 나가지 않아요."
+                 : "이 Mac에선 쓸 수 없어요: \(AIJudge.unavailableReason)")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Divider()
             HStack {
                 Spacer()
                 Button("기본값으로 초기화") {
                     // Every SpaType preference; registered defaults take over again.
-                    UserDefaults.standard.removeObject(forKey: AutoConvert.key)
-                    UserDefaults.standard.removeObject(forKey: AutoConvert.enterAcceptsKey)
+                    Prefs.all.forEach(UserDefaults.standard.removeObject(forKey:))
                     level = AutoConvert.defaultValue.rawValue
                     enterAccepts = true
+                    aiJudge = true
                 }
             }
         }
